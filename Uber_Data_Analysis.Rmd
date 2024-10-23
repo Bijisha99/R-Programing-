@@ -1,0 +1,178 @@
+---
+output:
+  word_document: default
+  html_document: default
+---
+"Uber Ride Data Analysis: Exploring Fare Patterns and Pickup Trends in NYC"
+#In this project, I analyzed Uber ride data to explore fare patterns, passenger counts, and spatial trends. I summarized the data, identified the highest and lowest fares, and visualized fare distributions. After cleaning the data by removing invalid entries, I calculated distances between pickup and dropoff points and assessed the relationship between distance and fare using linear regression. Temporal trends were examined by plotting average fares per year, and a clustered map highlighted areas with the highest pickup density. This analysis provided insights into key patterns and behaviors in Uber rides.
+
+# Load necessary libraries
+library(geosphere)
+library(dplyr)
+library(ggplot2)
+
+# 1. Display the first few rows of the Uber_data dataset
+head(Uber_data)
+
+# 2. Summary of the dataset
+summary(Uber_data)
+
+# 3. Top 5 highest fare rides
+Uber_data[order(-Uber_data$fare_amount), ][1:5, ]
+
+# 4. Top 5 lowest fare rides
+Uber_data[order(Uber_data$fare_amount), ][1:5, ]
+
+# 5. Histogram of fare amounts
+hist(Uber_data$fare_amount, 
+     main = "Distribution of Fare Amounts (0 to 100)", 
+     xlab = "Fare Amount", 
+     col = "blue", 
+     xlim = c(0, 100), 
+     breaks = 5)  # Set the number of breaks to 5
+
+# Clean the data: Remove rows where pickup_latitude is 0
+Uber_data <- Uber_data[Uber_data$pickup_latitude != 0, ]
+
+# 6. Passenger Count Distribution as Percentages
+# Calculate passenger count data
+passenger_count_data <- table(Uber_data$passenger_count)
+passenger_count_percentages <- (passenger_count_data / sum(passenger_count_data)) * 100
+
+# Filter the data to include only passenger counts from 0 to 5
+filtered_percentages <- passenger_count_percentages[names(passenger_count_percentages) %in% as.character(0:5)]
+
+# Create the bar plot with percentages
+barplot(filtered_percentages, 
+        main = "Passenger Count Distribution (Percentages)", 
+        xlab = "Number of Passengers", 
+        ylab = "Percentage (%)", 
+        col = "red",
+        ylim = c(0, max(filtered_percentages) * 1.1))  # Adjust y-axis limit for better visualization
+
+# 7. Relationship Between Fare Amount and Distance
+# Filter rows with valid longitude and latitude ranges
+Uber_data_cleaned <- Uber_data[
+  Uber_data$pickup_longitude >= -180 & Uber_data$pickup_longitude <= 180 &
+    Uber_data$pickup_latitude >= -90 & Uber_data$pickup_latitude <= 90 &
+    Uber_data$dropoff_longitude >= -180 & Uber_data$dropoff_longitude <= 180 &
+    Uber_data$dropoff_latitude >= -90 & Uber_data$dropoff_latitude <= 90, 
+]
+
+# Remove any remaining rows with NA values in required columns
+Uber_data_cleaned <- na.omit(Uber_data_cleaned)
+
+# Calculate the Haversine distance in miles, round to 1 decimal point, and add it as a new column
+Uber_data_cleaned$distance_miles <- round(distHaversine(
+  matrix(c(Uber_data_cleaned$pickup_longitude, Uber_data_cleaned$pickup_latitude), ncol = 2),
+  matrix(c(Uber_data_cleaned$dropoff_longitude, Uber_data_cleaned$dropoff_latitude), ncol = 2)
+) / 1609.34, 1)  # Convert meters to miles and round to 1 decimal point
+
+# View the cleaned dataset with distances in miles
+head(Uber_data_cleaned)
+
+# Ensure fare_amount and distance_miles are numeric
+Uber_data_cleaned$fare_amount <- as.numeric(Uber_data_cleaned$fare_amount)
+Uber_data_cleaned$distance_miles <- as.numeric(Uber_data_cleaned$distance_miles)
+
+# Filter the dataset for reasonable values (distance <= 40 miles and fare_amount between 0 and 500)
+Uber_data_filtered <- subset(Uber_data_cleaned, distance_miles <= 40 & fare_amount >= 0 & fare_amount <= 500)
+
+# Check if the filtered dataset is not empty
+if (nrow(Uber_data_filtered) > 0) {
+  # Fit the linear model with the filtered data
+  linear_model_filtered <- lm(fare_amount ~ distance_miles, data = Uber_data_filtered)
+  
+  # Display a summary of the linear model
+  summary(linear_model_filtered)
+  
+  # Create a scatter plot with the linear regression line
+  ggplot(Uber_data_filtered, aes(x = distance_miles, y = fare_amount)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth(method = "lm", col = "blue", se = FALSE) +
+    labs(title = "Relationship Between Distance Traveled and Fare Amount (Filtered to 40 miles)",
+         x = "Distance (miles)",
+         y = "Fare Amount ($)") +
+    theme_minimal()
+} else {
+  print("No data available after filtering. Please check your dataset.")
+}
+
+# 8. Average Fare Amount Per Year
+# Ensure that pickup_datetime is in the proper datetime format
+Uber_data$pickup_datetime <- as.POSIXct(Uber_data$pickup_datetime, format = "%Y-%m-%d %H:%M:%S", tz = "UTC")
+
+# Remove rows with NA values in pickup_datetime and fare_amount
+Uber_data <- Uber_data %>%
+  filter(!is.na(pickup_datetime) & !is.na(fare_amount))
+
+# Extract the year from the pickup_datetime column
+Uber_data$year <- format(Uber_data$pickup_datetime, "%Y")
+
+# Calculate the average fare_amount for each year
+average_fare_per_year <- Uber_data %>%
+  group_by(year) %>%
+  summarize(average_fare = mean(fare_amount, na.rm = TRUE))
+
+# Create a line graph to show the average fare amount per year
+ggplot(average_fare_per_year, aes(x = as.numeric(year), y = average_fare)) +
+  geom_line(color = "blue", size = 1) +
+  geom_point(color = "red", size = 2) +
+  labs(title = "Average Uber Fare Amount Per Year",
+       x = "Year",
+       y = "Average Fare Amount ($)") +
+  theme_minimal()
+
+# 9.Plotting in map high uber demands 
+# Load necessary libraries
+library(leaflet)
+library(dplyr)
+
+# Ensure pickup_latitude and pickup_longitude are numeric
+Uber_data_cleaned$pickup_latitude <- as.numeric(Uber_data_cleaned$pickup_latitude)
+Uber_data_cleaned$pickup_longitude <- as.numeric(Uber_data_cleaned$pickup_longitude)
+
+# Create a basic map with leaflet
+pickup_map <- leaflet(Uber_data_cleaned) %>%
+  addTiles() %>%
+  addCircleMarkers(
+    ~pickup_longitude, ~pickup_latitude,
+    radius = 3,  # Marker size
+    color = "#0073b7",  # Marker color
+    stroke = FALSE,
+    fillOpacity = 0.5,
+    group = "Pickup Locations"
+  )
+
+# Display the map
+pickup_map
+
+# Load necessary libraries
+library(leaflet)
+library(dplyr)
+
+# Ensure pickup_latitude and pickup_longitude are numeric
+Uber_data_cleaned$pickup_latitude <- as.numeric(Uber_data_cleaned$pickup_latitude)
+Uber_data_cleaned$pickup_longitude <- as.numeric(Uber_data_cleaned$pickup_longitude)
+
+# Create a clustered map of pickup locations
+pickup_cluster_map <- leaflet(Uber_data_cleaned) %>%
+  addTiles() %>%
+  addMarkers(
+    ~pickup_longitude, ~pickup_latitude,
+    clusterOptions = markerClusterOptions(),
+    label = ~paste("Pickup at:", pickup_latitude, ",", pickup_longitude),
+    popup = ~paste("Pickup Location:<br>Latitude:", pickup_latitude, "<br>Longitude:", pickup_longitude)
+  ) %>%
+  addLegend(
+    "bottomright",
+    colors = "#0073b7",
+    labels = "Pickup Locations",
+    title = "Clustered Pickups"
+  )
+
+# Display the clustered map
+pickup_cluster_map
+
+
+
